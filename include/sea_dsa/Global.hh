@@ -24,7 +24,7 @@ namespace sea_dsa {
 
 class AllocWrapInfo;
 
-enum GlobalAnalysisKind {
+enum class GlobalAnalysisKind {
   // useful for VC generation
   CONTEXT_INSENSITIVE,
   // useful for VC generation
@@ -45,7 +45,7 @@ protected:
   GlobalAnalysisKind _kind;
 
 public:
-  GlobalAnalysis(GlobalAnalysisKind kind) : _kind(kind) {}
+  GlobalAnalysis(GlobalAnalysisKind kind): _kind(kind) {}
 
   virtual ~GlobalAnalysis() {}
 
@@ -53,18 +53,23 @@ public:
 
   virtual bool runOnModule(llvm::Module &M) = 0;
 
-  // return the points-to graph for F
+  // return the points-to graph for F upon completion of the global
+  // analysis.
   virtual const Graph &getGraph(const llvm::Function &F) const = 0;
   virtual Graph &getGraph(const llvm::Function &F) = 0;
 
-  // return true if F has its own points-to graph
+  // return true if F has its own points-to graph upon completion of
+  // the global analysis
   virtual bool hasGraph(const llvm::Function &F) const = 0;
 
-  // return the summary (bottom up) graph for F
+  // return the summary points-to graph for F. A summary graph models
+  // all the points-to relationships of F ignoring possible callers to
+  // F.
   virtual const Graph &getSummaryGraph(const llvm::Function &F) const = 0;
   virtual Graph &getSummaryGraph(const llvm::Function &F) = 0;
 
-  // return true if F has its own points-to graph
+  // return true if F has its own summary points-to graph and
+  // m_store_sum_graphs = true.
   virtual bool hasSummaryGraph(const llvm::Function &F) const = 0;
 };
 
@@ -91,9 +96,11 @@ public:
                                    const AllocWrapInfo &allocInfo,
                                    llvm::CallGraph &cg, SetFactory &setFactory,
                                    const bool useFlatMemory)
-      : GlobalAnalysis(useFlatMemory ? FLAT_MEMORY : CONTEXT_INSENSITIVE),
-        m_dl(dl), m_tli(tli), m_allocInfo(allocInfo), m_cg(cg),
-        m_setFactory(setFactory), m_graph(nullptr) {}
+    : GlobalAnalysis(useFlatMemory ?
+		     GlobalAnalysisKind::FLAT_MEMORY :
+		     GlobalAnalysisKind::CONTEXT_INSENSITIVE),
+      m_dl(dl), m_tli(tli), m_allocInfo(allocInfo), m_cg(cg),
+      m_setFactory(setFactory), m_graph(nullptr) {}
 
   // unify caller/callee nodes within the same graph
   static void resolveArguments(DsaCallSite &cs, Graph &g);
@@ -106,11 +113,19 @@ public:
 
   bool hasGraph(const llvm::Function &fn) const override;
 
-  const Graph &getSummaryGraph(const llvm::Function &fn) const override;
+  // XXX: the notion of summary graph really makes sense if the
+  // analysis is context-sensitive so we return the global analysis.
+  const Graph &getSummaryGraph(const llvm::Function &F) const override {
+    return getGraph(F);
+  }
 
-  Graph &getSummaryGraph(const llvm::Function &fn) override;
+  Graph &getSummaryGraph(const llvm::Function &F) {
+    return getGraph(F);
+  }
 
-  bool hasSummaryGraph(const llvm::Function &fn) const override;
+  bool hasSummaryGraph(const llvm::Function &F) const override {
+    return hasGraph(F);
+  }
 };
 
 template <typename T> class WorkList {
@@ -148,10 +163,13 @@ private:
   llvm::CallGraph &m_cg;
   SetFactory &m_setFactory;
 
-public:
+  // Context-sensitive graphs
   GraphMap m_graphs;
-  GraphMap m_bugraphs; // new for coloring
+  // Bottom-up graphs
+  GraphMap m_bu_graphs;
+  // Whether to store bottom-up graphs
 
+  bool m_store_bu_graphs;
   PropagationKind decidePropagation(const DsaCallSite &cs, Graph &callerG,
                                     Graph &calleeG);
 
@@ -168,8 +186,9 @@ public:
   ContextSensitiveGlobalAnalysis(const llvm::DataLayout &dl,
                                  const llvm::TargetLibraryInfo &tli,
                                  const AllocWrapInfo &allocInfo,
-                                 llvm::CallGraph &cg, SetFactory &setFactory);
-  
+                                 llvm::CallGraph &cg, SetFactory &setFactory,
+				 bool storeSummaryGraphs = false);
+
   bool runOnModule(llvm::Module &M) override;
 
   const Graph &getGraph(const llvm::Function &fn) const override;
@@ -178,11 +197,11 @@ public:
 
   bool hasGraph(const llvm::Function &fn) const override;
 
-  const Graph &getSummaryGraph(const llvm::Function &fn) const override;
+  const Graph &getSummaryGraph(const llvm::Function &F) const override;
+  
+  Graph &getSummaryGraph(const llvm::Function &F);
 
-  Graph &getSummaryGraph(const llvm::Function &fn) override;
-
-  bool hasSummaryGraph(const llvm::Function &fn) const override;
+  bool hasSummaryGraph(const llvm::Function &F) const override;  
 };
 
 /**
@@ -203,13 +222,19 @@ private:
   const AllocWrapInfo &m_allocInfo;
   llvm::CallGraph &m_cg;
   SetFactory &m_setFactory;
+  // Context-sensitive graphs
   GraphMap m_graphs;
-
+  // Bottom-up graphs
+  GraphMap m_bu_graphs;
+  // whether to store bottom-up graphs
+  bool m_store_bu_graphs;
+  
 public:
   BottomUpTopDownGlobalAnalysis(const llvm::DataLayout &dl,
                                 const llvm::TargetLibraryInfo &tli,
                                 const AllocWrapInfo &allocInfo,
-                                llvm::CallGraph &cg, SetFactory &setFactory);
+                                llvm::CallGraph &cg, SetFactory &setFactory,
+				bool storeSummaryGraphs = false);
 
   bool runOnModule(llvm::Module &M) override;
 
@@ -219,11 +244,11 @@ public:
 
   bool hasGraph(const llvm::Function &fn) const override;
 
-  const Graph &getSummaryGraph(const llvm::Function &fn) const override;
+  const Graph &getSummaryGraph(const llvm::Function &F) const override;
+  
+  Graph &getSummaryGraph(const llvm::Function &F);
 
-  Graph &getSummaryGraph(const llvm::Function &fn) override;
-
-  bool hasSummaryGraph(const llvm::Function &fn) const override;
+  bool hasSummaryGraph(const llvm::Function &F) const override;    
 };
 
 /**
@@ -258,11 +283,17 @@ public:
 
   bool hasGraph(const llvm::Function &fn) const override;
 
-  const Graph &getSummaryGraph(const llvm::Function &fn) const override;
+  const Graph &getSummaryGraph(const llvm::Function &F) const override {
+    return getGraph(F);    
+  }
+  
+  Graph &getSummaryGraph(const llvm::Function &F) {
+    return getGraph(F);
+  }
 
-  Graph &getSummaryGraph(const llvm::Function &fn) override;
-
-  bool hasSummaryGraph(const llvm::Function &fn) const override;
+  bool hasSummaryGraph(const llvm::Function &F) const override {
+    return hasGraph(F);
+  }
 };
 
 

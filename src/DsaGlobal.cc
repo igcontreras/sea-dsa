@@ -90,7 +90,7 @@ bool ContextInsensitiveGlobalAnalysis::runOnModule(Module &M) {
 
   // ufo::Stats::resume ("CI-DsaAnalysis");
 
-  if (kind() == FLAT_MEMORY)
+  if (kind() == GlobalAnalysisKind::FLAT_MEMORY)
     m_graph.reset(new FlatGraph(m_dl, m_setFactory));
   else
     m_graph.reset(new Graph(m_dl, m_setFactory));
@@ -109,7 +109,7 @@ bool ContextInsensitiveGlobalAnalysis::runOnModule(Module &M) {
 
       // compute local graph
       GraphRef fGraph = nullptr;
-      if (kind() == FLAT_MEMORY)
+      if (kind() == GlobalAnalysisKind::FLAT_MEMORY)
         fGraph.reset(new FlatGraph(m_dl, m_setFactory));
       else
         fGraph.reset(new Graph(m_dl, m_setFactory));
@@ -266,6 +266,13 @@ template <typename T> const T &WorkList<T>::dequeue() {
   return e;
 }
 
+std::unique_ptr<Graph> cloneGraph(const llvm::DataLayout &dl,
+                                  Graph::SetFactory &sf, const Graph &g) {
+  std::unique_ptr<Graph> new_g(new Graph(dl, sf, g.isFlat()));
+  new_g->import(g, true /*copy all parameters*/);
+  return std::move(new_g);
+}
+  
 //////
 /// Context-sensitive analysis as described in SAS'17: bottom up +
 /// iterative (bottom-up/top-down) propagation on callsites.
@@ -275,10 +282,11 @@ ContextSensitiveGlobalAnalysis::
 ContextSensitiveGlobalAnalysis(const llvm::DataLayout &dl,
 			       const llvm::TargetLibraryInfo &tli,
 			       const AllocWrapInfo &allocInfo,
-			       llvm::CallGraph &cg, SetFactory &setFactory)
-  : GlobalAnalysis(CONTEXT_SENSITIVE), m_dl(dl), m_tli(tli),
-    m_allocInfo(allocInfo), m_cg(cg), m_setFactory(setFactory) {}
-    
+			       llvm::CallGraph &cg, SetFactory &setFactory,
+			       bool storeSummaryGraphs)
+  : GlobalAnalysis(GlobalAnalysisKind::CONTEXT_SENSITIVE), m_dl(dl), m_tli(tli),
+    m_allocInfo(allocInfo), m_cg(cg), m_setFactory(setFactory),
+    m_store_bu_graphs(storeSummaryGraphs) {}
 
 bool ContextSensitiveGlobalAnalysis::checkAllNodesAreMapped(
     const Function &fn, Graph &fnG, const SimulationMapper &sm) {
@@ -323,14 +331,13 @@ bool ContextSensitiveGlobalAnalysis::runOnModule(Module &M) {
   BottomUpAnalysis bu(m_dl, m_tli, m_allocInfo, m_cg, flowSensitiveOpt);
   bu.runOnModule(M, m_graphs);
 
-  // cloning the bu graphs for later
-  //  if (MemDot) {
-    for (auto kv = m_graphs.begin(), end = m_graphs.end(); kv != end; kv++) {
-      m_bugraphs.insert(std::make_pair(
-          kv->getFirst(), cloneGraph(m_dl, m_setFactory, *(kv->getSecond()))));
+  if (m_store_bu_graphs) {
+    // -- store bottom-up graphs 
+    for (auto kv: m_graphs) {
+      m_bu_graphs.insert({
+	  kv.getFirst(), cloneGraph(m_dl, m_setFactory, *(kv.getSecond()))});
     }
-    //}
-
+  }
   // -- Compute simulation map so that we can identify which callsites
   // -- require extra top-down propagation. Since bottom-up pass has
   // -- been done already, we assume that the simulation relation is a
@@ -582,15 +589,15 @@ bool ContextSensitiveGlobalAnalysis::hasGraph(const Function &fn) const {
 
 const Graph &
 ContextSensitiveGlobalAnalysis::getSummaryGraph(const Function &fn) const {
-  return *(m_bugraphs.find(&fn)->second);
+  return *(m_bu_graphs.find(&fn)->second);  
 }
 
 Graph &ContextSensitiveGlobalAnalysis::getSummaryGraph(const Function &fn) {
-  return *(m_bugraphs.find(&fn)->second);
+  return *(m_bu_graphs.find(&fn)->second);    
 }
 
 bool ContextSensitiveGlobalAnalysis::hasSummaryGraph(const Function &fn) const {
-  return m_bugraphs.count(&fn) > 0;
+  return m_bu_graphs.count(&fn) > 0;  
 }
 
 ///////
@@ -600,9 +607,11 @@ BottomUpTopDownGlobalAnalysis::
 BottomUpTopDownGlobalAnalysis(const llvm::DataLayout &dl,
 			      const llvm::TargetLibraryInfo &tli,
 			      const AllocWrapInfo &allocInfo,
-			      llvm::CallGraph &cg, SetFactory &setFactory)
-  : GlobalAnalysis(BUTD_CONTEXT_SENSITIVE), m_dl(dl), m_tli(tli),
-    m_allocInfo(allocInfo), m_cg(cg), m_setFactory(setFactory) {}
+			      llvm::CallGraph &cg, SetFactory &setFactory,
+			      bool storeSummaryGraphs)
+  : GlobalAnalysis(GlobalAnalysisKind::BUTD_CONTEXT_SENSITIVE), m_dl(dl), m_tli(tli),
+    m_allocInfo(allocInfo), m_cg(cg), m_setFactory(setFactory),
+    m_store_bu_graphs(storeSummaryGraphs){}
 
 bool BottomUpTopDownGlobalAnalysis::runOnModule(Module &M) {
   LOG("dsa-global",
@@ -621,6 +630,14 @@ bool BottomUpTopDownGlobalAnalysis::runOnModule(Module &M) {
   BottomUpAnalysis bu(m_dl, m_tli, m_allocInfo, m_cg);
   bu.runOnModule(M, m_graphs);
 
+  if (m_store_bu_graphs) {
+    // -- store bottom-up graphs 
+    for (auto kv: m_graphs) {
+      m_bu_graphs.insert({
+	  kv.getFirst(), cloneGraph(m_dl, m_setFactory, *(kv.getSecond()))});
+    }
+  }
+  
   // -- Run top down analysis on the whole call graph: callers before
   // -- callees.
   TopDownAnalysis td(m_cg);
@@ -654,18 +671,16 @@ bool BottomUpTopDownGlobalAnalysis::hasGraph(const Function &fn) const {
   return m_graphs.count(&fn) > 0;
 }
 
-// TODO: since the butd graph is an over-approximation of bu, it should be fine
-// to return this
 const Graph &BottomUpTopDownGlobalAnalysis::getSummaryGraph(const Function &fn) const {
-  return *(m_graphs.find(&fn)->second);
+  return *(m_bu_graphs.find(&fn)->second);  
 }
 
 Graph &BottomUpTopDownGlobalAnalysis::getSummaryGraph(const Function &fn) {
-  return *(m_graphs.find(&fn)->second);
+  return *(m_bu_graphs.find(&fn)->second);  
 }
 
 bool BottomUpTopDownGlobalAnalysis::hasSummaryGraph(const Function &fn) const {
-  return m_graphs.count(&fn) > 0;
+  return m_bu_graphs.count(&fn) > 0;  
 }
 
 ///////
@@ -676,7 +691,7 @@ BottomUpGlobalAnalysis(const llvm::DataLayout &dl,
 		       const llvm::TargetLibraryInfo &tli,
 		       const AllocWrapInfo &allocInfo,
 		       llvm::CallGraph &cg, SetFactory &setFactory)
-  : GlobalAnalysis(BU), m_dl(dl), m_tli(tli),
+  : GlobalAnalysis(GlobalAnalysisKind::BU), m_dl(dl), m_tli(tli),
     m_allocInfo(allocInfo), m_cg(cg), m_setFactory(setFactory) {}
 
 bool BottomUpGlobalAnalysis::runOnModule(Module &M) {
