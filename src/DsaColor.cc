@@ -51,14 +51,6 @@ bool ColoredGraph::isSafeNode(const Node *n) const {
   return m_safe.count(n) == 0;
 }
 
-
-std::unique_ptr<Graph> cloneGraph(const llvm::DataLayout &dl,
-                                  Graph::SetFactory &sf,const Graph &g) {
-  std::unique_ptr<Graph> new_g( new Graph( dl, sf, g.isFlat()));
-  new_g->import(g, true /*copy all parameters*/);
-  return std::move(new_g);
-}
-
 bool GraphExplorer::isSafeNode(NodeSet &f_safe, const Node *n) {
   return f_safe.count(n) == 0;
 }

@@ -1112,136 +1112,93 @@ const Cell &Graph::getCell(const llvm::Value &u) {
   }
 }
 
-bool Graph::hasCell(const llvm::Value &u) const {
-  auto &v = *u.stripPointerCasts();
-  return
-      // -- globals are always implicitly present
-      isa<GlobalValue>(&v) || m_values.count(&v) > 0 ||
-      (isa<Argument>(&v) && m_formals.count(cast<const Argument>(&v)) > 0);
-}
-
-// static bool isIntToPtrConstant(const llvm::Value &v) {
-//   if (auto *inttoptr = dyn_cast<ConstantExpr>(&v)) {
-//     if (inttoptr->getOpcode() == Instruction::IntToPtr) {
-//       return true;
-//     }
-//   }
-//   return false;
-// }
-
-DsaAllocSite *sea_dsa::Graph::mkAllocSite(const llvm::Value &v) {
-  auto res = getAllocSite(v);
-  if (res.hasValue())
-    return res.getValue();
-
-  m_allocSites.emplace_back(new DsaAllocSite(*this, v));
-  DsaAllocSite *as = m_allocSites.back().get();
-  m_valueToAllocSite.insert(std::make_pair(&v, as));
-  return as;
-}
-
-DsaCallSite *Graph::mkCallSite(const llvm::Instruction &I, Cell c) {
-  auto it = m_instructionToCallSite.find(&I);
-  if (it != m_instructionToCallSite.end()) {
-    return it->second;
+  bool Graph::hasCell(const llvm::Value &u) const {
+    auto &v = *u.stripPointerCasts();
+    return
+        // -- globals are always implicitly present
+        isa<GlobalValue>(&v) || m_values.count(&v) > 0 ||
+        (isa<Argument>(&v) && m_formals.count(cast<const Argument>(&v)) > 0);
   }
 
-  m_callSites.emplace_back(new DsaCallSite(I, c));
-  DsaCallSite *cs = m_callSites.back().get();
-  m_instructionToCallSite.insert(std::make_pair(&I, cs));
-  return cs;
-}
+  // static bool isIntToPtrConstant(const llvm::Value &v) {
+  //   if (auto *inttoptr = dyn_cast<ConstantExpr>(&v)) {
+  //     if (inttoptr->getOpcode() == Instruction::IntToPtr) {
+  //       return true;
+  //     }
+  //   }
+  //   return false;
+  // }
 
-llvm::iterator_range<typename Graph::callsite_iterator> Graph::callsites() {
-  return llvm::make_range(m_callSites.begin(), m_callSites.end());
-}
+  DsaAllocSite *sea_dsa::Graph::mkAllocSite(const llvm::Value &v) {
+    auto res = getAllocSite(v);
+    if (res.hasValue())
+      return res.getValue();
 
-llvm::iterator_range<typename Graph::callsite_const_iterator> Graph::callsites() const {
-  return llvm::make_range(m_callSites.begin(), m_callSites.end());
-}
+    m_allocSites.emplace_back(new DsaAllocSite(*this, v));
+    DsaAllocSite *as = m_allocSites.back().get();
+    m_valueToAllocSite.insert(std::make_pair(&v, as));
+    return as;
+  }
 
-void Graph::clearCallSites() {
-  m_instructionToCallSite.clear();
-  m_callSites.clear();
-}
-
-void Cell::write(raw_ostream &o) const {
-  getNode();
-  o << "<" << m_offset << ", ";
-  if (m_node)
-    m_node->write(o);
-  else
-    o << "null";
-  o << ">";
-}
-
-void Node::dump() const {
-  write(errs());
-  errs() << "\n";
-}
-
-void Node::viewGraph() { getGraph()->viewGraph(); }
-
-bool Graph::computeCalleeCallerMapping(const DsaCallSite &cs, Graph &calleeG,
-                                       Graph &callerG, SimulationMapper &simMap,
-                                       const bool reportIfSanityCheckFailed) {
-  // XXX: to be removed
-  const bool onlyModified = false;
-
-  for (auto &kv : boost::make_iterator_range(calleeG.globals_begin(),
-                                             calleeG.globals_end())) {
-    Cell &c = *kv.second;
-    if (!onlyModified || c.isModified()) {
-      Cell &nc = callerG.mkCell(*kv.first, Cell());
-      if (!simMap.insert(c, nc)) {
-        if (reportIfSanityCheckFailed) {
-          errs() << "ERROR 1: callee is not simulated by caller at "
-                 << *cs.getInstruction() << "\n"
-                 << "\tGlobal: " << *kv.first << "\n"
-                 << "\tCallee cell=" << c << "\n"
-                 << "\tCaller cell=" << nc << "\n";
-        }
-        return false;
-      }
+  DsaCallSite *Graph::mkCallSite(const llvm::Instruction &I, Cell c) {
+    auto it = m_instructionToCallSite.find(&I);
+    if (it != m_instructionToCallSite.end()) {
+      return it->second;
     }
+
+    m_callSites.emplace_back(new DsaCallSite(I, c));
+    DsaCallSite *cs = m_callSites.back().get();
+    m_instructionToCallSite.insert(std::make_pair(&I, cs));
+    return cs;
   }
 
-  const Function &callee = *cs.getCallee();
-  if (calleeG.hasRetCell(callee) && callerG.hasCell(*cs.getInstruction())) {
-    const Cell &c = calleeG.getRetCell(callee);
-    if (!onlyModified || c.isModified()) {
-      Cell &nc = callerG.mkCell(*cs.getInstruction(), Cell());
-      if (!simMap.insert(c, nc)) {
-        if (reportIfSanityCheckFailed) {
-          errs() << "ERROR 2: callee is not simulated by caller at "
-                 << *cs.getInstruction() << "\n"
-                 << "\rReturn value of " << callee.getName() << "\n"
-                 << "\rCallee cell=" << c << "\n"
-                 << "\rCaller cell=" << nc << "\n";
-        }
-        return false;
-      }
-    }
+  llvm::iterator_range<typename Graph::callsite_iterator> Graph::callsites() {
+    return llvm::make_range(m_callSites.begin(), m_callSites.end());
   }
 
-  DsaCallSite::const_actual_iterator AI = cs.actual_begin(),
-                                     AE = cs.actual_end();
-  for (DsaCallSite::const_formal_iterator FI = cs.formal_begin(),
-                                          FE = cs.formal_end();
-       FI != FE && AI != AE; ++FI, ++AI) {
-    const Value *fml = &*FI;
-    const Value *arg = (*AI).get();
+  llvm::iterator_range<typename Graph::callsite_const_iterator>
+  Graph::callsites() const {
+    return llvm::make_range(m_callSites.begin(), m_callSites.end());
+  }
 
-    if (calleeG.hasCell(*fml) && callerG.hasCell(*arg)) {
-      Cell &c = calleeG.mkCell(*fml, Cell());
+  void Graph::clearCallSites() {
+    m_instructionToCallSite.clear();
+    m_callSites.clear();
+  }
+
+  void Cell::write(raw_ostream & o) const {
+    getNode();
+    o << "<" << m_offset << ", ";
+    if (m_node)
+      m_node->write(o);
+    else
+      o << "null";
+    o << ">";
+  }
+
+  void Node::dump() const {
+    write(errs());
+    errs() << "\n";
+  }
+
+  void Node::viewGraph() { getGraph()->viewGraph(); }
+
+  bool Graph::computeCalleeCallerMapping(
+      const DsaCallSite &cs, Graph &calleeG, Graph &callerG,
+      SimulationMapper &simMap, const bool reportIfSanityCheckFailed) {
+    // XXX: to be removed
+    const bool onlyModified = false;
+
+    for (auto &kv : boost::make_iterator_range(calleeG.globals_begin(),
+                                               calleeG.globals_end())) {
+      Cell &c = *kv.second;
       if (!onlyModified || c.isModified()) {
-        Cell &nc = callerG.mkCell(*arg, Cell());
+        Cell &nc = callerG.mkCell(*kv.first, Cell());
         if (!simMap.insert(c, nc)) {
           if (reportIfSanityCheckFailed) {
-            errs() << "ERROR 3: callee is not simulated by caller at "
+            errs() << "ERROR 1: callee is not simulated by caller at "
                    << *cs.getInstruction() << "\n"
-                   << "\tFormal param " << *fml << "\n"
-                   << "\tActual param " << *arg << "\n"
+                   << "\tGlobal: " << *kv.first << "\n"
                    << "\tCallee cell=" << c << "\n"
                    << "\tCaller cell=" << nc << "\n";
           }
@@ -1249,168 +1206,214 @@ bool Graph::computeCalleeCallerMapping(const DsaCallSite &cs, Graph &calleeG,
         }
       }
     }
+
+    const Function &callee = *cs.getCallee();
+    if (calleeG.hasRetCell(callee) && callerG.hasCell(*cs.getInstruction())) {
+      const Cell &c = calleeG.getRetCell(callee);
+      if (!onlyModified || c.isModified()) {
+        Cell &nc = callerG.mkCell(*cs.getInstruction(), Cell());
+        if (!simMap.insert(c, nc)) {
+          if (reportIfSanityCheckFailed) {
+            errs() << "ERROR 2: callee is not simulated by caller at "
+                   << *cs.getInstruction() << "\n"
+                   << "\rReturn value of " << callee.getName() << "\n"
+                   << "\rCallee cell=" << c << "\n"
+                   << "\rCaller cell=" << nc << "\n";
+          }
+          return false;
+        }
+      }
+    }
+
+    DsaCallSite::const_actual_iterator AI = cs.actual_begin(),
+                                       AE = cs.actual_end();
+    for (DsaCallSite::const_formal_iterator FI = cs.formal_begin(),
+                                            FE = cs.formal_end();
+         FI != FE && AI != AE; ++FI, ++AI) {
+      const Value *fml = &*FI;
+      const Value *arg = (*AI).get();
+
+      if (calleeG.hasCell(*fml) && callerG.hasCell(*arg)) {
+        Cell &c = calleeG.mkCell(*fml, Cell());
+        if (!onlyModified || c.isModified()) {
+          Cell &nc = callerG.mkCell(*arg, Cell());
+          if (!simMap.insert(c, nc)) {
+            if (reportIfSanityCheckFailed) {
+              errs() << "ERROR 3: callee is not simulated by caller at "
+                     << *cs.getInstruction() << "\n"
+                     << "\tFormal param " << *fml << "\n"
+                     << "\tActual param " << *arg << "\n"
+                     << "\tCallee cell=" << c << "\n"
+                     << "\tCaller cell=" << nc << "\n";
+            }
+            return false;
+          }
+        }
+      }
+    }
+    return true;
   }
-  return true;
-}
 
-void Graph::import(const Graph &g, bool withFormals) {
-  Cloner C(*this, CloningContext::mkNoContext(), Cloner::Options::Basic);
-  for (auto &kv : g.m_values) {
-    // -- clone node
-    Node &n = C.clone(*kv.second->getNode());
-
-    // -- re-create the cell
-    Cell c(n, kv.second->getRawOffset());
-
-    // -- insert value
-    Cell &nc = mkCell(*kv.first, Cell());
-
-    // -- unify the old and new cells
-    nc.unify(c);
-  }
-
-  if (withFormals) {
-    for (auto &kv : g.m_formals) {
+  void Graph::import(const Graph &g, bool withFormals) {
+    Cloner C(*this, CloningContext::mkNoContext(), Cloner::Options::Basic);
+    for (auto &kv : g.m_values) {
+      // -- clone node
       Node &n = C.clone(*kv.second->getNode());
+
+      // -- re-create the cell
       Cell c(n, kv.second->getRawOffset());
+
+      // -- insert value
       Cell &nc = mkCell(*kv.first, Cell());
+
+      // -- unify the old and new cells
       nc.unify(c);
     }
-    for (auto &kv : g.m_returns) {
-      Node &n = C.clone(*kv.second->getNode());
-      Cell c(n, kv.second->getRawOffset());
-      Cell &nc = mkRetCell(*kv.first, Cell());
-      nc.unify(c);
-    }
-  }
 
-  // possibly created many indirect links, compress
-  compress();
-}
-
-void Graph::write(raw_ostream &o) const {
-
-  typedef std::set<const llvm::Value *> ValSet;
-  typedef std::set<const llvm::Argument *> ArgSet;
-  typedef std::set<const llvm::Function *> FuncSet;
-
-  typedef DenseMap<const Cell *, ValSet> CellValMap;
-  typedef DenseMap<const Cell *, ArgSet> CellArgMap;
-  typedef DenseMap<const Cell *, FuncSet> CellRetMap;
-
-  // --- collect all nodes and cells referenced by scalars
-  CellValMap scalarCells;
-  for (auto &kv : m_values) {
-    const Cell *C = kv.second.get();
-    auto it = scalarCells.find(C);
-    if (it == scalarCells.end()) {
-      ValSet S;
-      S.insert(kv.first);
-      scalarCells.insert(std::make_pair(C, S));
-    } else {
-      it->second.insert(kv.first);
-    }
-  }
-
-  // --- collect all nodes and cells referenced by function formal
-  //     parameters
-  CellArgMap argCells;
-  for (auto &kv : m_formals) {
-    const Cell *C = kv.second.get();
-    auto it = argCells.find(C);
-    if (it == argCells.end()) {
-      ArgSet S;
-      S.insert(kv.first);
-      argCells.insert(std::make_pair(C, S));
-    } else {
-      it->second.insert(kv.first);
-    }
-  }
-
-  // --- collect all nodes and cells referenced by return parameters
-  CellRetMap retCells;
-  for (auto &kv : m_returns) {
-    const Cell *C = kv.second.get();
-    auto it = retCells.find(C);
-    if (it == retCells.end()) {
-      FuncSet S;
-      S.insert(kv.first);
-      retCells.insert(std::make_pair(C, S));
-    } else {
-      it->second.insert(kv.first);
-    }
-  }
-
-  // --- print all nodes
-  o << "=== NODES\n";
-  for (auto &N : m_nodes) {
-    N->write(o);
-    o << "\n";
-  }
-
-  // --- print aliasing sets
-  // TODO: print LLVM registers in equivalence classes (grouped by cells)
-  o << "=== TOP-LEVEL CELLS\n";
-  for (auto &kv : scalarCells) {
-    const Cell *C = kv.first;
-    if (kv.second.begin() != kv.second.end()) {
-      o << "cell=(" << C->getNode() << "," << C->getRawOffset() << ")\n";
-      for (const Value *V : kv.second) {
-	if (const Function* F = dyn_cast<const Function>(V)) {
-	  o << "\t" << F->getName() << ":" << *(F->getType()) << "\n";
-	} else {
-	  o << "\t" << *V << "\n";
-	}
+    if (withFormals) {
+      for (auto &kv : g.m_formals) {
+        Node &n = C.clone(*kv.second->getNode());
+        Cell c(n, kv.second->getRawOffset());
+        Cell &nc = mkCell(*kv.first, Cell());
+        nc.unify(c);
+      }
+      for (auto &kv : g.m_returns) {
+        Node &n = C.clone(*kv.second->getNode());
+        Cell c(n, kv.second->getRawOffset());
+        Cell &nc = mkRetCell(*kv.first, Cell());
+        nc.unify(c);
       }
     }
+
+    // possibly created many indirect links, compress
+    compress();
   }
-  for (auto &kv : argCells) {
-    const Cell *C = kv.first;
-    if (kv.second.begin() != kv.second.end()) {
-      o << "cell=(" << C->getNode() << "," << C->getRawOffset() << ")\n";
-      for (const Argument *A : kv.second) {
-        o << "\t" << *A << "\n";
+
+  void Graph::write(raw_ostream & o) const {
+
+    typedef std::set<const llvm::Value *> ValSet;
+    typedef std::set<const llvm::Argument *> ArgSet;
+    typedef std::set<const llvm::Function *> FuncSet;
+
+    typedef DenseMap<const Cell *, ValSet> CellValMap;
+    typedef DenseMap<const Cell *, ArgSet> CellArgMap;
+    typedef DenseMap<const Cell *, FuncSet> CellRetMap;
+
+    // --- collect all nodes and cells referenced by scalars
+    CellValMap scalarCells;
+    for (auto &kv : m_values) {
+      const Cell *C = kv.second.get();
+      auto it = scalarCells.find(C);
+      if (it == scalarCells.end()) {
+        ValSet S;
+        S.insert(kv.first);
+        scalarCells.insert(std::make_pair(C, S));
+      } else {
+        it->second.insert(kv.first);
       }
     }
-  }
-  for (auto &kv : retCells) {
-    const Cell *C = kv.first;
-    if (kv.second.begin() != kv.second.end()) {
-      o << "cell=(" << C->getNode() << "," << C->getRawOffset() << ")\n";
-      for (const Function *F : kv.second) {
-        o << "\tret(" << F->getName() << ")\n";
+
+    // --- collect all nodes and cells referenced by function formal
+    //     parameters
+    CellArgMap argCells;
+    for (auto &kv : m_formals) {
+      const Cell *C = kv.second.get();
+      auto it = argCells.find(C);
+      if (it == argCells.end()) {
+        ArgSet S;
+        S.insert(kv.first);
+        argCells.insert(std::make_pair(C, S));
+      } else {
+        it->second.insert(kv.first);
       }
     }
+
+    // --- collect all nodes and cells referenced by return parameters
+    CellRetMap retCells;
+    for (auto &kv : m_returns) {
+      const Cell *C = kv.second.get();
+      auto it = retCells.find(C);
+      if (it == retCells.end()) {
+        FuncSet S;
+        S.insert(kv.first);
+        retCells.insert(std::make_pair(C, S));
+      } else {
+        it->second.insert(kv.first);
+      }
+    }
+
+    // --- print all nodes
+    o << "=== NODES\n";
+    for (auto &N : m_nodes) {
+      N->write(o);
+      o << "\n";
+    }
+
+    // --- print aliasing sets
+    // TODO: print LLVM registers in equivalence classes (grouped by cells)
+    o << "=== TOP-LEVEL CELLS\n";
+    for (auto &kv : scalarCells) {
+      const Cell *C = kv.first;
+      if (kv.second.begin() != kv.second.end()) {
+        o << "cell=(" << C->getNode() << "," << C->getRawOffset() << "), " << C
+          << "\n";
+        for (const Value *V : kv.second) {
+          if (const Function *F = dyn_cast<const Function>(V)) {
+            o << "\t" << F->getName() << ":" << *(F->getType()) << "\n";
+          } else {
+            o << "\t" << *V << "\n";
+          }
+        }
+      }
+    }
+    for (auto &kv : argCells) {
+      const Cell *C = kv.first;
+      if (kv.second.begin() != kv.second.end()) {
+        o << "cell=(" << C->getNode() << "," << C->getRawOffset() << "), " << C
+          << "\n";
+        for (const Argument *A : kv.second) {
+          o << "\t" << *A << "\n";
+        }
+      }
+    }
+    for (auto &kv : retCells) {
+      const Cell *C = kv.first;
+      if (kv.second.begin() != kv.second.end()) {
+        o << "cell=(" << C->getNode() << "," << C->getRawOffset() << "), " << C
+          << "\n";
+        for (const Function *F : kv.second) {
+          o << "\tret(" << F->getName() << ")\n";
+        }
+      }
+    }
+
+    // if (!m_callSites.empty()) {
+    //   o << "=== INDIRECT CALLSITES\n";
+    //   for (unsigned i = 0, e = m_callSites.size(); i < e; ++i) {
+    //     m_callSites[i]->write(o);
+    //     o << "\n";
+    //   }
+    // }
   }
 
-  // if (!m_callSites.empty()) {
-  //   o << "=== INDIRECT CALLSITES\n";
-  //   for (unsigned i = 0, e = m_callSites.size(); i < e; ++i) {
-  //     m_callSites[i]->write(o);
-  //     o << "\n";
-  //   }
-  // }
-  
-}
+  size_t Graph::numCollapsed() const {
+    return std::count_if(
+        m_nodes.begin(), m_nodes.end(),
+        [](const NodeVectorElemTy &N) { return N->isOffsetCollapsed(); });
+  }
 
-size_t Graph::numCollapsed() const {
-  return std::count_if(
-      m_nodes.begin(), m_nodes.end(),
-      [](const NodeVectorElemTy &N) { return N->isOffsetCollapsed(); });
-}
+  void Graph::dump() const { write(errs()); }
 
-void Graph::dump() const { write(errs()); }
+  void Graph::viewGraph() { ShowDsaGraph(*this); }
 
-void Graph::viewGraph() { ShowDsaGraph(*this); }
+  Node &FlatGraph::mkNode() {
+    if (m_nodes.empty())
+      m_nodes.emplace_back(new (*m_allocator) Node(*this),
+                           m_allocator->getDeleter());
 
-Node &FlatGraph::mkNode() {
-  if (m_nodes.empty())
-    m_nodes.emplace_back(new (*m_allocator) Node(*this),
-                         m_allocator->getDeleter());
+    return *m_nodes.back();
+  }
 
-  return *m_nodes.back();
-}
-
-// Initialization of static data
-uint64_t Node::m_id_factory = 0;
+  // Initialization of static data
+  uint64_t Node::m_id_factory = 0;
 } // namespace sea_dsa

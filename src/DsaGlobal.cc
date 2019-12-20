@@ -167,21 +167,6 @@ bool ContextInsensitiveGlobalAnalysis::hasGraph(const Function &fn) const {
   return m_fns.count(&fn) > 0;
 }
 
-const Graph &
-ContextInsensitiveGlobalAnalysis::getSummaryGraph(const Function &) const {
-  assert(m_graph);
-  return *m_graph;
-}
-
-Graph &ContextInsensitiveGlobalAnalysis::getSummaryGraph(const Function &) {
-  assert(m_graph);
-  return *m_graph;
-}
-
-bool ContextInsensitiveGlobalAnalysis::hasSummaryGraph(const Function &fn) const {
-  return m_fns.count(&fn) > 0;
-}
-
 /// LLVM passes
 
 ContextInsensitiveGlobalPass::ContextInsensitiveGlobalPass()
@@ -736,19 +721,6 @@ Graph &BottomUpGlobalAnalysis::getGraph(const Function &fn) {
 }
 
 bool BottomUpGlobalAnalysis::hasGraph(const Function &fn) const {
-  return m_graphs.count(&fn) > 0;
-}
-
-// return the same graphs same graphs
-const Graph &BottomUpGlobalAnalysis::getSummaryGraph(const Function &fn) const {
-  return *(m_graphs.find(&fn)->second);
-}
-
-Graph &BottomUpGlobalAnalysis::getSummaryGraph(const Function &fn) {
-  return *(m_graphs.find(&fn)->second);
-}
-
-bool BottomUpGlobalAnalysis::hasSummaryGraph(const Function &fn) const {
   return m_graphs.count(&fn) > 0;
 }
 

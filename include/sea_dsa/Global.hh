@@ -296,7 +296,6 @@ public:
   }
 };
 
-
 // Llvm passes
 
 class DsaGlobalPass : public llvm::ModulePass {

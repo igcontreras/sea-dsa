@@ -54,10 +54,6 @@ public:
 };
 } // end namespace sea_dsa
 
-// To store the state of the graph after the bu pass
-std::unique_ptr<Graph> cloneGraph(const llvm::DataLayout &dl,
-                                  Graph::SetFactory &sf, const Graph &g);
-
 class GraphExplorer {
 private:
   static void
