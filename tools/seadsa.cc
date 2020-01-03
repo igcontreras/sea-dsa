@@ -60,9 +60,6 @@ CallGraphDot("sea-dsa-callgraph-dot",
 	     llvm::cl::init(false));
 
 static llvm::cl::opt<bool>
-    DsaColorCallSiteSimDot("sea-dsa-color-sim-dot", llvm::cl::desc("Output colored graphs according to how nodes of callees are simulated in the caller"),
-                        llvm::cl::init(false));
-static llvm::cl::opt<bool>
    RunShadowMem("sea-dsa-shadow-mem",
 	  llvm::cl::desc("Run ShadowMemPass"),
 	  llvm::cl::Hidden,
@@ -74,7 +71,7 @@ namespace sea_dsa {
   extern bool PrintCallGraphStats;
 }
 
-static llvm::cl::opt<sea_dsa::SeaDsaLogOpt, true, llvm::cl::parser<std::string> > 
+static llvm::cl::opt<sea_dsa::SeaDsaLogOpt, true, llvm::cl::parser<std::string> >
 LogClOption ("log",
              llvm::cl::desc ("Enable specified log level"),
              llvm::cl::location (sea_dsa::loc),
@@ -164,9 +161,7 @@ int main(int argc, char **argv) {
   } else {
     if (MemDot) {
       pass_manager.add(sea_dsa::createDsaPrinterPass());
-      if (DsaColorCallSiteSimDot)
-        pass_manager.add(sea_dsa::createDsaColorPrinterPass());
-    }
+   }
 
     if (MemViewer) {
       pass_manager.add(sea_dsa::createDsaViewerPass());

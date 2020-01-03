@@ -118,9 +118,9 @@ public:
   const Graph &getSummaryGraph(const llvm::Function &F) const override {
     return getGraph(F);
   }
-
+  
   Graph &getSummaryGraph(const llvm::Function &F) {
-    return getGraph(F);
+    return getGraph(F);    
   }
 
   bool hasSummaryGraph(const llvm::Function &F) const override {
@@ -163,13 +163,13 @@ private:
   llvm::CallGraph &m_cg;
   SetFactory &m_setFactory;
 
-  // Context-sensitive graphs
+  // Context-sensitive graphs 
   GraphMap m_graphs;
   // Bottom-up graphs
   GraphMap m_bu_graphs;
   // Whether to store bottom-up graphs
-
   bool m_store_bu_graphs;
+  
   PropagationKind decidePropagation(const DsaCallSite &cs, Graph &callerG,
                                     Graph &calleeG);
 
@@ -188,7 +188,7 @@ public:
                                  const AllocWrapInfo &allocInfo,
                                  llvm::CallGraph &cg, SetFactory &setFactory,
 				 bool storeSummaryGraphs = false);
-
+  
   bool runOnModule(llvm::Module &M) override;
 
   const Graph &getGraph(const llvm::Function &fn) const override;
@@ -296,6 +296,7 @@ public:
   }
 };
 
+
 // Llvm passes
 
 class DsaGlobalPass : public llvm::ModulePass {
@@ -375,8 +376,6 @@ public:
   GlobalAnalysis &getGlobalAnalysis() override {
     return *(static_cast<GlobalAnalysis *>(&*m_ga));
   }
-
-  ContextSensitiveGlobalAnalysis &getCSGlobalAnalysis() { return *m_ga; }
 };
 
 // LLVM pass for bottom-up + top-down analysis

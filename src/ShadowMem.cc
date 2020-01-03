@@ -1580,7 +1580,7 @@ GlobalAnalysis &ShadowMem::getDsaAnalysis() {
 bool ShadowMem::splitDsaNodes() const {
   return m_impl->splitDsaNodes();
 }
-
+  
 llvm::Optional<unsigned> ShadowMem::getCellId(const dsa::Cell &c) const {
   return m_impl->getCellId(c);
 }

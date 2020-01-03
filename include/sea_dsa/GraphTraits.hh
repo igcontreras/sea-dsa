@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __DSA_GRAPH_TRAITS_H
+#define __DSA_GRAPH_TRAITS_H
 
 #include "sea_dsa/Graph.hh"
 #include "llvm/ADT/GraphTraits.h"
@@ -55,7 +56,7 @@ namespace sea_dsa {
       return *_links_it->second;
     }
   };
-
+  
   
 // Provide iterators for Node...
 inline Node::iterator Node::begin() { return Node::iterator(this); }
@@ -65,7 +66,7 @@ inline Node::iterator Node::end() { return Node::iterator(this, false); }
 inline Node::const_iterator Node::begin() const { return Node::const_iterator(this); }
   
 inline Node::const_iterator Node::end() const { return Node::const_iterator(this, false); }
-
+  
 } // end namespace sea_dsa 
 
 namespace llvm {
@@ -115,5 +116,7 @@ namespace llvm {
     static ChildIteratorType child_begin(NodeType *N) { return N->begin(); }
     static ChildIteratorType child_end(NodeType *N) { return N->end(); }
   };
-
+  
 } // End llvm namespace
+
+#endif
