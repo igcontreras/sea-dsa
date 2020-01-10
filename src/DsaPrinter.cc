@@ -303,16 +303,17 @@ struct DOTGraphTraits<sea_dsa::Graph *> : public DefaultDOTGraphTraits {
   }
 
   static std::string getNodeAttributes(const sea_dsa::Node *N,
-                                       const sea_dsa::Graph *G,
-                                       ColorMap *cm) {
+                                       const sea_dsa::Graph *G, ColorMap *cm) {
     std::string empty;
     raw_string_ostream OS(empty);
 
     if( cm != nullptr){
       auto it = cm->find(N);
-      if (it != cm->end())
-        OS << "fillcolor=" << it->getSecond().stringColor() << ", style=filled";
-      else
+      if (it != cm->end()) {
+        std::ostringstream stringStream;
+        stringStream << "\"#" << std::hex << it->getSecond() << "\"";
+        OS << "fillcolor=" << stringStream.str() << ", style=filled";
+      } else
         OS << "fillcolor=gray, style=filled";
     }
     else{
@@ -713,8 +714,7 @@ public :
             Graph &callerG = m_dsa->getDsaAnalysis().getGraph(*f_caller);
             Graph &calleeG = m_dsa->getDsaAnalysis().getSummaryGraph(F);
 
-            GraphExplorer::colorGraph(*it, calleeG, callerG, color_callee, color_caller,
-                                      f_node_safe); // colors the graphs
+            colorGraph(*it, calleeG, callerG, color_callee, color_caller);
 
             std::string FilenameBase =
               F.getParent()->getModuleIdentifier() + "." + f_caller->getName().str() +
@@ -736,9 +736,7 @@ public :
       AU.addRequired<CompleteCallGraph>();
   }
 
-  StringRef getPassName() const override 
-  { return "SeaHorn Dsa graph printer"; }
-	  
+  StringRef getPassName() const override { return "SeaHorn Dsa graph printer"; }
 };
 
 // Used by Graph::viewGraph() and Node::viewGraph().
