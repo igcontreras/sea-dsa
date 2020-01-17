@@ -19,8 +19,7 @@ void color_nodes_aux(const Node &n_callee, const Node &n_caller,
 
   f_proc.insert(&n_callee); // mark processed
 
-  Color col = std::rand() &&
-              0xFFFFFF; // we only want the last 3 bytes for printing a color
+  Color col = std::rand() | 0xA0A0A0; // to avoid very dark colors
   auto it = c_caller.find(&n_caller);
   if (it != c_caller.end()) {
     col = it->second;
@@ -73,4 +72,4 @@ void colorGraph(const DsaCallSite &cs, const Graph &calleeG,
 }
 
 
-} // namespace
+} // sea_dsa

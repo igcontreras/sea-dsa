@@ -311,7 +311,8 @@ struct DOTGraphTraits<sea_dsa::Graph *> : public DefaultDOTGraphTraits {
       auto it = cm->find(N);
       if (it != cm->end()) {
         std::ostringstream stringStream;
-        stringStream << "\"#" << std::hex << it->getSecond() << "\"";
+        Color c = it->getSecond();
+        stringStream << "\"#" << std::hex << c << "\""; // this can be done because we know c > 0xA0A0A0
         OS << "fillcolor=" << stringStream.str() << ", style=filled";
       } else
         OS << "fillcolor=gray, style=filled";
@@ -323,6 +324,8 @@ struct DOTGraphTraits<sea_dsa::Graph *> : public DefaultDOTGraphTraits {
         OS << "fillcolor=chocolate1, style=filled";
       } else if (N->isTypeCollapsed() && sea_dsa::IsTypeAware) {
         OS << "fillcolor=darkorchid2, style=filled";
+      } else {
+        OS << "fillcolor=gray, style=filled";
       }
     }
     return OS.str();
