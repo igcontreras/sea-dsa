@@ -1,4 +1,5 @@
 #include "llvm/ADT/GraphTraits.h"
+#include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DOTGraphTraits.h"
@@ -6,6 +7,7 @@
 #include "llvm/Support/GraphWriter.h"
 
 #include "sea_dsa/CompleteCallGraph.hh"
+#include "sea_dsa/CallGraphUtils.hh"
 #include "sea_dsa/DsaAnalysis.hh"
 #include "sea_dsa/Global.hh"
 #include "sea_dsa/GraphTraits.hh"
@@ -660,7 +662,6 @@ struct DsaPrinter : public ModulePass {
 
 private:
   int m_cs_count = 0; // to distinguish callsites
-  std::unique_ptr<CallGraphWrapper> m_CG = nullptr;
 
 public :
 
@@ -676,16 +677,47 @@ public :
         writeGraph(G, Filename);
       }
     } else {
-      if (DsaColorCallSiteSimDot) {
-        auto &CCG = getAnalysis<CompleteCallGraph>();
-        auto &dsaCallGraph = CCG.getCompleteCallGraph();
+      if(DsaColorCallSiteSimDot){
+        CompleteCallGraph &ccg = getAnalysis<CompleteCallGraph>();
+        llvm::CallGraph &cg = ccg.getCompleteCallGraph();
+        for (auto it = scc_begin(&cg); !it.isAtEnd(); ++it) {
+          auto &scc = *it;
+          for (CallGraphNode *cgn : scc) {
+            Function *fn = cgn->getFunction();
+            if (!fn || fn->isDeclaration() || fn->empty()) {
+              continue;
+            }
+            // -- store the simulation maps from the SCC
+            for (auto &callRecord : *cgn) {
 
-        m_CG = llvm::make_unique<CallGraphWrapper>(dsaCallGraph);
+              llvm::Optional<DsaCallSite> dsaCS = call_graph_utils::getDsaCallSite(callRecord);
+              if (!dsaCS.hasValue()) {
+                continue;
+              }
+              DsaCallSite &cs = dsaCS.getValue();
+              Function * f_caller = fn;
+              const Function * f_callee = cs.getCallee();
+              Graph &callerG =
+                m_dsa->getDsaAnalysis().getGraph(*f_caller);
+              Graph &calleeG =
+                m_dsa->getDsaAnalysis().getSummaryGraph(*f_callee);
 
-        m_CG->buildDependencies(); // TODO: this is already done already in
-        // ContextSensitiveGlobalAnalysis but it is
-        // stored locally in the runOnModule function, so
-        // we have to recompute it.
+              ColorMap color_callee, color_caller;
+              colorGraph(cs, calleeG, callerG, color_callee,
+                         color_caller);
+              std::string FilenameBase =
+                f_caller->getParent()->getModuleIdentifier() + "." +
+                f_caller->getName().str() + "." + f_callee->getName().str() +
+                "." + std::to_string(++m_cs_count);
+
+              writeGraph(&calleeG, FilenameBase + ".callee.mem.dot",
+                         &color_callee);
+              writeGraph(&callerG, FilenameBase + ".caller.mem.dot",
+                         &color_caller);
+
+            }
+          }
+        }
       }
       for (auto &F : M)
         runOnFunction(F);
@@ -699,34 +731,6 @@ public :
       if (G->begin() != G->end()) {
         std::string Filename = F.getName().str() + ".mem.dot";
         writeGraph(G, Filename);
-
-        if (DsaColorCallSiteSimDot){
-         assert(m_CG);
-          auto call_sites = m_CG->getUses(F);
-
-          auto it = call_sites.begin();
-          auto end = call_sites.end();
-
-          for( ; it != end ; it++){
-
-            ColorMap color_callee, color_caller;
-            NodeSet f_node_safe;
-
-            const Function * f_caller = it->getCallSite().getCaller();
-
-            Graph &callerG = m_dsa->getDsaAnalysis().getGraph(*f_caller);
-            Graph &calleeG = m_dsa->getDsaAnalysis().getSummaryGraph(F);
-
-            colorGraph(*it, calleeG, callerG, color_callee, color_caller);
-
-            std::string FilenameBase =
-              F.getParent()->getModuleIdentifier() + "." + f_caller->getName().str() +
-              "." + F.getName().str() + "." + std::to_string(++m_cs_count);
-
-            writeGraph(&calleeG, FilenameBase + ".callee.mem.dot", &color_callee);
-            writeGraph(&callerG, FilenameBase + ".caller.mem.dot", &color_caller);
-          }
-        }
       }
     }
     return false;

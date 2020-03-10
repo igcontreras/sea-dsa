@@ -202,7 +202,6 @@ bool isShadowMemInst(const llvm::Value &v) {
 
 class ShadowMemImpl : public InstVisitor<ShadowMemImpl> {
   dsa::GlobalAnalysis &m_dsa;
-  dsa::AllocSiteInfo &m_asi;
   TargetLibraryInfo &m_tli;
   const DataLayout *m_dl;
   CallGraph *m_callGraph;
@@ -432,7 +431,6 @@ class ShadowMemImpl : public InstVisitor<ShadowMemImpl> {
 
   void markUseCall(CallInst *ci, llvm::Optional<unsigned> accessedBytes) {
     assert(m_llvmCtx);
-    Module *m = ci->getModule();
     MDNode *meta = MDNode::get(*m_llvmCtx, None);
     ci->setMetadata(m_metadataTag, meta);
     ci->setMetadata(m_memUseTag, mkMetaConstant(accessedBytes));
@@ -623,11 +621,11 @@ class ShadowMemImpl : public InstVisitor<ShadowMemImpl> {
   bool mayClobber(CallInst &memDef, CallInst &memUse, AllocSitesCache &cache);
 
 public:
-  ShadowMemImpl(dsa::GlobalAnalysis &dsa, dsa::AllocSiteInfo &asi,
+  ShadowMemImpl(dsa::GlobalAnalysis &dsa, dsa::AllocSiteInfo &asi /*unused*/,
                 TargetLibraryInfo &tli, CallGraph *cg, Pass &pass,
                 bool splitDsaNodes, bool computeReadMod, bool memOptimizer,
                 bool useTBAA)
-      : m_dsa(dsa), m_asi(asi), m_tli(tli), m_dl(nullptr), m_callGraph(cg),
+      : m_dsa(dsa), m_tli(tli), m_dl(nullptr), m_callGraph(cg),
         m_pass(pass), m_splitDsaNodes(splitDsaNodes),
         m_computeReadMod(computeReadMod), m_memOptimizer(memOptimizer),
         m_useTBAA(useTBAA) {}
@@ -834,7 +832,6 @@ bool ShadowMemImpl::runOnFunction(Function &F) {
   this->visit(F);
 
   auto &B = *m_B;
-  auto &ctx = *m_llvmCtx;
   auto &G = *m_graph;
   // -- compute pseudo-functions for inputs and outputs
 
@@ -1082,8 +1079,10 @@ void ShadowMemImpl::visitDsaCallSite(dsa::DsaCallSite &CS) {
     dsa::Cell callerC = simMap.get(dsa::Cell(const_cast<dsa::Node *>(n), 0));
     assert(!callerC.isNull() && "Not found node in the simulation map");
 
-    AllocaInst *v = getShadowForField(callerC);
-    unsigned id = getFieldId(callerC);
+    // allocate shadow for callerC
+    getShadowForField(callerC);
+    // assign an id to callerC
+    getFieldId(callerC);
 
     // -- read only node ignore nodes that are only reachable
     // -- from the return of the function
@@ -1354,9 +1353,11 @@ CallInst &ShadowMemImpl::getParentDef(CallInst &memOp) {
   if (isMemInit(memOp))
     return memOp;
 
-  auto *fn = memOp.getCalledFunction();
-  assert(fn);
-  assert(fn == m_memLoadFn || fn == m_memStoreFn || fn == m_memTrsfrLoadFn);
+  if (auto *fn = memOp.getCalledFunction()) {
+    assert(fn == m_memLoadFn || fn == m_memStoreFn || fn == m_memTrsfrLoadFn);
+  } else {
+    assert(false && "CallInst should be a shadow mem call");
+  }
 
   assert(memOp.getNumOperands() >= 1);
   Value *defArg = memOp.getOperand(1);
