@@ -334,8 +334,8 @@ class IntraBlockBuilder : public InstVisitor<IntraBlockBuilder>,
   void visitSelectInst(SelectInst &SI);
   void visitLoadInst(LoadInst &LI);
   void visitStoreInst(StoreInst &SI);
-  // void visitAtomicCmpXchgInst(AtomicCmpXchgInst &I);
-  // void visitAtomicRMWInst(AtomicRMWInst &I);
+  void visitAtomicCmpXchgInst(AtomicCmpXchgInst &I);
+  void visitAtomicRMWInst(AtomicRMWInst &I);
   void visitReturnInst(ReturnInst &RI);
   // void visitVAArgInst(VAArgInst   &I);
   void visitIntToPtrInst(IntToPtrInst &I);
@@ -413,7 +413,15 @@ sea_dsa::Cell BlockBuilderBase::valueCell(const Value &v) {
     if (ce->isCast() && ce->getOperand(0)->getType()->isPointerTy())
       return valueCell(*ce->getOperand(0));
     else if (ce->getOpcode() == Instruction::GetElementPtr) {
-      Value &base = *(ce->getOperand(0));
+      Value &base = *(ce->getOperand(0));      
+
+      // We create first a cell for the gep'd pointer operand if it's
+      // an IntToPtr
+      if (const ConstantExpr *base_ce = dyn_cast<ConstantExpr>(&base)) {
+      	if (base_ce->getOpcode() == Instruction::IntToPtr) {
+      	  valueCell(base);
+      	}
+      }
       SmallVector<Value *, 8> indicies(ce->op_begin() + 1, ce->op_end());
       visitGep(v, base, indicies);
       assert(m_graph.hasCell(v));
@@ -530,6 +538,73 @@ void IntraBlockBuilder::visitLoadInst(LoadInst &LI) {
   if (isa<StructType>(LI.getType())) {
     Cell dest(base.getNode(), base.getRawOffset());
     m_graph.mkCell(LI, dest);
+  }
+}
+
+/// OldVal := *Ptr
+/// Success := false
+/// if OldVal == Cmp then
+///    Success := true
+///    *Ptr := New
+/// return {OldVal, Success}
+void IntraBlockBuilder::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I) {
+  using namespace sea_dsa;
+  
+  if (!m_graph.hasCell(*I.getPointerOperand()->stripPointerCasts())) {
+    return;
+  }
+  Value *Ptr = I.getPointerOperand();
+  Value *New = I.getNewValOperand();
+  
+  Cell PtrC = valueCell(*Ptr);
+  assert(!PtrC.isNull());
+
+  assert(isa<StructType>(I.getType()));
+  Type *ResTy = cast<StructType>(I.getType())->getTypeAtIndex((unsigned) 0); 
+  
+  PtrC.setModified();
+  PtrC.setRead();
+  PtrC.growSize(0, Ptr->getType());
+  PtrC.addAccessedType(0, Ptr->getType());
+
+  if (ResTy->isPointerTy()) {
+    // Load the content of Ptr and make it the cell of the
+    // instruction's result.
+    Field LoadedField(0, FieldType(ResTy));
+    if (!PtrC.hasLink(LoadedField)) {
+      Node &n = m_graph.mkNode();
+      PtrC.setLink(LoadedField, Cell(n, 0));
+    }
+    Cell Res = m_graph.mkCell(I, PtrC.getLink(LoadedField));
+
+
+    if (!isSkip(*New)) {
+      Cell NewC = valueCell(*New);
+      assert(!NewC.isNull());
+      // Merge the result and the content of Ptr with New
+      Res.unify(NewC);
+    }
+  }
+}
+
+/// OldVal = *Ptr
+/// *Ptr = op(OldVal, Val)
+/// return OldVal
+void IntraBlockBuilder::visitAtomicRMWInst(AtomicRMWInst &I) {
+  Value *Ptr = I.getPointerOperand();
+
+  sea_dsa::Cell PtrC = valueCell(*Ptr);
+  assert(!PtrC.isNull());
+
+  PtrC.setModified();
+  PtrC.setRead();
+  PtrC.growSize(0, I.getType());
+  PtrC.addAccessedType(0, I.getType());
+
+  if (!isSkip(I)) {
+    sea_dsa::Node &n = m_graph.mkNode();
+    sea_dsa::Cell ResC = m_graph.mkCell(I, sea_dsa::Cell(n, 0));
+    ResC.unify(PtrC);
   }
 }
 
@@ -1313,7 +1388,7 @@ bool isEscapingPtrToInt(const PtrToIntInst &def) {
       continue;
 
     for (auto *user : v->users()) {
-      if (!seen.count(user))
+      if (seen.count(user))
         continue;
       if (isa<BranchInst>(user) || isa<CmpInst>(user))
         continue;
@@ -1334,7 +1409,11 @@ bool isEscapingPtrToInt(const PtrToIntInst &def) {
                        callee->getName() == "llvm.assume"))
           continue;
       }
-      if (isa<LoadInst>(*v) || isa<StoreInst>(*v) || isa<CallInst>(*v))
+
+      // if the value flows into one of these operands, we consider it escaping
+      // and stop tracking it further
+      if (isa<LoadInst>(*user) || isa<StoreInst>(*user) ||
+          isa<CallInst>(*user) || isa<IntToPtrInst>(*user))
         return true;
 
       workList.push_back(user);
@@ -1344,18 +1423,23 @@ bool isEscapingPtrToInt(const PtrToIntInst &def) {
 }
 
 void IntraBlockBuilder::visitPtrToIntInst(PtrToIntInst &I) {
-  if (!isEscapingPtrToInt(I))
+  if (!isEscapingPtrToInt(I)) 
     return;
 
   assert(m_graph.hasCell(*I.getOperand(0)));
   sea_dsa::Cell c = valueCell(*I.getOperand(0));
   if (!c.isNull()) {
-    llvm::errs() << "WARNING: ";
-    bool printAddress = true;
-    LOG("dsa", llvm::errs() << I; printAddress = false);
-    if (printAddress)
-      llvm::errs() << intptr_t(&I);
-    llvm::errs() << " may be escaping.\n";
+
+    // mark node as having a pointer that escapes
+    c.getNode()->setPtrToInt(true);
+
+    // print a warning, more verbose under dsa LOG
+    LOG("dsa", llvm::errs()
+                   << "WARNING: " << I
+                   << " might be escaping as is not tracked further\n");
+    llvm::errs() << "WARNING: detected ptrtoint instruction that might be "
+                    "escaping the analysis. "
+                 << "(@" << intptr_t(&I) << ")\n";
   }
 }
 
